@@ -1,204 +1,243 @@
 # db.py
+import sqlite3
+import os
 
-import pymssql
-from db_config import DB_CONFIG
-from datetime import datetime
-
-# =============================================
-# ПОДКЛЮЧЕНИЕ К БД
-# =============================================
+# ★★★ ПУТЬ К ФАЙЛУ БАЗЫ ★★★
+DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'database.db')
 
 def get_connection():
-    """Создает и возвращает подключение к MS SQL"""
+    """Создает подключение к SQLite"""
     try:
-        conn = pymssql.connect(
-            server=DB_CONFIG['server'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-            database=DB_CONFIG['database'],
-            port=DB_CONFIG.get('port', 1433),
-            charset='utf-8'
-        )
+        # Создаем папку data, если её нет
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row  # Чтобы можно было обращаться по именам колонок
         return conn
     except Exception as e:
-        print(f"❌ Ошибка подключения к БД: {e}")
+        print(f"❌ Ошибка подключения: {e}")
         return None
 
-def execute_query(query, params=None):
-    """Выполняет SQL-запрос и возвращает результат"""
+def create_tables():
+    """Создает таблицы, если их нет"""
     conn = get_connection()
     if not conn:
-        return None
+        return
     
-    try:
-        cursor = conn.cursor(as_dict=True)
-        if params:
-            cursor.execute(query, params)
-        else:
-            cursor.execute(query)
-        
-        # Если это SELECT — возвращаем результат
-        if query.strip().upper().startswith('SELECT'):
-            result = cursor.fetchall()
-            conn.close()
-            return result
-        
-        # Если это INSERT/UPDATE/DELETE — коммитим
+    cursor = conn.cursor()
+    
+    # Создаем таблицу гостей
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS guests (
+            guest_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_id INTEGER UNIQUE NOT NULL,
+            full_name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            email TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Создаем таблицу номеров
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rooms (
+            room_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_number TEXT UNIQUE NOT NULL,
+            room_name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            price_per_night REAL NOT NULL,
+            max_capacity INTEGER NOT NULL,
+            is_active INTEGER DEFAULT 1
+        )
+    ''')
+    
+    # Создаем таблицу бронирований
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS bookings (
+            booking_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guest_id INTEGER NOT NULL,
+            room_id INTEGER NOT NULL,
+            check_in_date TEXT NOT NULL,
+            check_out_date TEXT NOT NULL,
+            total_price REAL NOT NULL,
+            status TEXT DEFAULT 'Подтверждено',
+            source TEXT DEFAULT 'Telegram Bot',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (guest_id) REFERENCES guests(guest_id),
+            FOREIGN KEY (room_id) REFERENCES rooms(room_id)
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+    print("✅ Таблицы созданы (если их не было)")
+
+def init_rooms():
+    """Добавляет тестовые номера, если их нет"""
+    conn = get_connection()
+    if not conn:
+        return
+    
+    cursor = conn.cursor()
+    
+    # Проверяем, есть ли номера
+    cursor.execute("SELECT COUNT(*) FROM rooms")
+    count = cursor.fetchone()[0]
+    
+    if count == 0:
+        rooms = [
+            ('101', 'Одноместный эконом', 'Эконом', 2500, 1),
+            ('102', 'Двухместный эконом', 'Эконом', 3000, 2),
+            ('103', 'Эконом с видом на город', 'Эконом', 3200, 2),
+            ('201', 'Стандарт с видом на город', 'Стандарт', 4500, 2),
+            ('202', 'Стандарт с видом на море', 'Стандарт', 5500, 3),
+            ('203', 'Семейный стандарт', 'Стандарт', 6000, 4),
+            ('301', 'Люкс с джакузи', 'Люкс', 8500, 2),
+            ('302', 'Люкс с террасой', 'Люкс', 9500, 3),
+            ('401', 'Президентский люкс', 'Президентский', 15000, 4)
+        ]
+        cursor.executemany('''
+            INSERT INTO rooms (room_number, room_name, category, price_per_night, max_capacity)
+            VALUES (?, ?, ?, ?, ?)
+        ''', rooms)
         conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка выполнения запроса: {e}")
-        conn.close()
-        return None
+        print("✅ Добавлены тестовые номера")
+    
+    conn.close()
 
 # =============================================
-# ФУНКЦИИ ДЛЯ РАБОТЫ С ГОСТЯМИ
+# ФУНКЦИИ ДЛЯ РАБОТЫ С БД
 # =============================================
 
 def get_guest_by_telegram_id(telegram_id):
-    """Найти гостя по Telegram ID"""
-    query = """
-        SELECT GuestID, TelegramID, FullName, Phone, Email, CreatedAt
-        FROM Guests
-        WHERE TelegramID = %s
-    """
-    result = execute_query(query, (telegram_id,))
-    if result and len(result) > 0:
-        return result[0]
-    return None
+    conn = get_connection()
+    if not conn:
+        return None
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM guests WHERE telegram_id = ?", (telegram_id,))
+    guest = cursor.fetchone()
+    conn.close()
+    return guest
 
 def create_guest(telegram_id, full_name, phone, email=None):
-    """Создать нового гостя"""
-    query = """
-        INSERT INTO Guests (TelegramID, FullName, Phone, Email, CreatedAt)
-        VALUES (%s, %s, %s, %s, GETDATE())
-    """
-    params = (telegram_id, full_name, phone, email)
-    success = execute_query(query, params)
-    
-    if success:
-        # Получаем ID созданного гостя
-        query_id = "SELECT SCOPE_IDENTITY() AS GuestID"
-        result = execute_query(query_id)
-        if result and len(result) > 0:
-            return result[0]['GuestID']
-    return None
-
-# =============================================
-# ФУНКЦИИ ДЛЯ РАБОТЫ С НОМЕРАМИ
-# =============================================
+    conn = get_connection()
+    if not conn:
+        return None
+    cursor = conn.cursor()
+    try:
+        cursor.execute('''
+            INSERT INTO guests (telegram_id, full_name, phone, email)
+            VALUES (?, ?, ?, ?)
+        ''', (telegram_id, full_name, phone, email))
+        conn.commit()
+        guest_id = cursor.lastrowid
+        conn.close()
+        return guest_id
+    except Exception as e:
+        print(f"❌ Ошибка создания гостя: {e}")
+        conn.close()
+        return None
 
 def get_room_by_number(room_number):
-    """Получить информацию о номере по его номеру"""
-    query = """
-        SELECT RoomID, RoomNumber, RoomName, Category, PricePerNight, MaxCapacity, IsActive
-        FROM Rooms
-        WHERE RoomNumber = %s AND IsActive = 1
-    """
-    result = execute_query(query, (room_number,))
-    if result and len(result) > 0:
-        return result[0]
-    return None
+    conn = get_connection()
+    if not conn:
+        return None
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM rooms WHERE room_number = ? AND is_active = 1", (room_number,))
+    room = cursor.fetchone()
+    conn.close()
+    return room
 
 def get_all_rooms():
-    """Получить все активные номера"""
-    query = """
-        SELECT RoomID, RoomNumber, RoomName, Category, PricePerNight, MaxCapacity
-        FROM Rooms
-        WHERE IsActive = 1
-        ORDER BY RoomNumber
-    """
-    return execute_query(query) or []
+    conn = get_connection()
+    if not conn:
+        return []
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM rooms WHERE is_active = 1 ORDER BY room_number")
+    rooms = cursor.fetchall()
+    conn.close()
+    return rooms
 
 def search_free_rooms(check_in_date, check_out_date):
-    """Поиск свободных номеров на указанные даты"""
-    query = """
+    conn = get_connection()
+    if not conn:
+        return []
+    cursor = conn.cursor()
+    cursor.execute('''
         SELECT 
-            r.RoomNumber,
-            r.RoomName,
-            r.Category,
-            r.PricePerNight,
-            r.MaxCapacity
-        FROM Rooms r
-        WHERE r.IsActive = 1
+            r.room_number,
+            r.room_name,
+            r.category,
+            r.price_per_night,
+            r.max_capacity
+        FROM rooms r
+        WHERE r.is_active = 1
         AND NOT EXISTS (
             SELECT 1
-            FROM Bookings b
-            WHERE b.RoomID = r.RoomID
-            AND b.Status IN ('Подтверждено', 'Активно')
+            FROM bookings b
+            WHERE b.room_id = r.room_id
+            AND b.status IN ('Подтверждено', 'Активно')
             AND (
-                (b.CheckInDate <= %s AND b.CheckOutDate >= %s)
-                OR (b.CheckInDate <= %s AND b.CheckOutDate >= %s)
-                OR (b.CheckInDate >= %s AND b.CheckOutDate <= %s)
+                (b.check_in_date <= ? AND b.check_out_date >= ?)
+                OR (b.check_in_date <= ? AND b.check_out_date >= ?)
+                OR (b.check_in_date >= ? AND b.check_out_date <= ?)
             )
         )
-    """
-    params = (check_out_date, check_in_date, check_out_date, check_in_date, check_in_date, check_out_date)
-    return execute_query(query, params) or []
-
-# =============================================
-# ФУНКЦИИ ДЛЯ РАБОТЫ С БРОНИРОВАНИЯМИ
-# =============================================
+    ''', (check_out_date, check_in_date, check_out_date, check_in_date, check_in_date, check_out_date))
+    rooms = cursor.fetchall()
+    conn.close()
+    return rooms
 
 def create_booking(guest_id, room_id, check_in_date, check_out_date, total_price):
-    """Создать новое бронирование"""
-    query = """
-        INSERT INTO Bookings (GuestID, RoomID, CheckInDate, CheckOutDate, TotalPrice, Status, Source, CreatedAt)
-        VALUES (%s, %s, %s, %s, %s, 'Подтверждено', 'Telegram Bot', GETDATE())
-    """
-    params = (guest_id, room_id, check_in_date, check_out_date, total_price)
-    success = execute_query(query, params)
-    
-    if success:
-        query_id = "SELECT SCOPE_IDENTITY() AS BookingID"
-        result = execute_query(query_id)
-        if result and len(result) > 0:
-            return result[0]['BookingID']
-    return None
+    conn = get_connection()
+    if not conn:
+        return None
+    cursor = conn.cursor()
+    try:
+        cursor.execute('''
+            INSERT INTO bookings (guest_id, room_id, check_in_date, check_out_date, total_price, status, source)
+            VALUES (?, ?, ?, ?, ?, 'Подтверждено', 'Telegram Bot')
+        ''', (guest_id, room_id, check_in_date, check_out_date, total_price))
+        conn.commit()
+        booking_id = cursor.lastrowid
+        conn.close()
+        return booking_id
+    except Exception as e:
+        print(f"❌ Ошибка создания бронирования: {e}")
+        conn.close()
+        return None
 
 def get_user_bookings(telegram_id):
-    """Получить все бронирования пользователя"""
-    query = """
+    conn = get_connection()
+    if not conn:
+        return []
+    cursor = conn.cursor()
+    cursor.execute('''
         SELECT 
-            b.BookingID,
-            r.RoomNumber,
-            r.RoomName,
-            b.CheckInDate,
-            b.CheckOutDate,
-            b.TotalPrice,
-            b.Status,
-            b.CreatedAt
-        FROM Bookings b
-        JOIN Rooms r ON b.RoomID = r.RoomID
-        JOIN Guests g ON b.GuestID = g.GuestID
-        WHERE g.TelegramID = %s
-        ORDER BY b.CreatedAt DESC
-    """
-    return execute_query(query, (telegram_id,)) or []
-
-def cancel_booking(booking_id, telegram_id):
-    """Отменить бронирование (только если оно принадлежит пользователю)"""
-    query = """
-        UPDATE b
-        SET b.Status = 'Отменено'
-        FROM Bookings b
-        JOIN Guests g ON b.GuestID = g.GuestID
-        WHERE b.BookingID = %s AND g.TelegramID = %s
-    """
-    return execute_query(query, (booking_id, telegram_id))
-
-# =============================================
-# ФУНКЦИЯ ДЛЯ ПРОВЕРКИ ПОДКЛЮЧЕНИЯ
-# =============================================
+            b.booking_id,
+            r.room_number,
+            r.room_name,
+            b.check_in_date,
+            b.check_out_date,
+            b.total_price,
+            b.status,
+            b.created_at
+        FROM bookings b
+        JOIN rooms r ON b.room_id = r.room_id
+        JOIN guests g ON b.guest_id = g.guest_id
+        WHERE g.telegram_id = ?
+        ORDER BY b.created_at DESC
+    ''', (telegram_id,))
+    bookings = cursor.fetchall()
+    conn.close()
+    return bookings
 
 def test_connection():
     """Проверяет подключение к БД"""
     conn = get_connection()
     if conn:
-        print("✅ Подключение к MS SQL установлено успешно!")
+        print("✅ Подключение к SQLite установлено!")
         conn.close()
         return True
     else:
-        print("❌ НЕ УДАЛОСЬ подключиться к MS SQL!")
+        print("❌ НЕ УДАЛОСЬ подключиться к SQLite!")
         return False
