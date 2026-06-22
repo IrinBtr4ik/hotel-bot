@@ -1,204 +1,26 @@
+# main.py
+
 import telebot
-import pymssql
-import os
-from datetime import datetime
+from datetime import datetime, timedelta
+from db import (
+    test_connection,
+    get_guest_by_telegram_id,
+    create_guest,
+    get_room_by_number,
+    search_free_rooms,
+    create_booking,
+    get_user_bookings,
+    cancel_booking
+)
 
-# =============================================
-# НАСТРОЙКИ
-# =============================================
-
-# Telegram токен
+# ★★★ ТОКЕН ★★★
 TOKEN = "8884031821:AAFoIkaqm6lsjKRzhaA0cCPRo8XquU6-aLc"
-
-# ★★★ ПОДКЛЮЧЕНИЕ К MS SQL ★★★
-DB_CONFIG = {
-    'server': 'localhost',           # или '127.0.0.1'
-    'user': 'sa',                    # логин SQL Server
-    'password': 'YourStrongPassword', # пароль
-    'database': 'HotelBotDB'
-}
-
-# =============================================
-# ПОДКЛЮЧЕНИЕ К БД
-# =============================================
-
-def get_db_connection():
-    """Создает подключение к MS SQL"""
-    try:
-        conn = pymssql.connect(
-            server=DB_CONFIG['server'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-            database=DB_CONFIG['database']
-        )
-        return conn
-    except Exception as e:
-        print(f"❌ Ошибка подключения к БД: {e}")
-        return None
-
-def get_room_by_number(room_number):
-    """Получить информацию о номере по его номеру"""
-    conn = get_db_connection()
-    if not conn:
-        return None
-    
-    try:
-        cursor = conn.cursor(as_dict=True)
-        cursor.execute("""
-            SELECT RoomID, RoomNumber, RoomName, Category, PricePerNight, MaxCapacity
-            FROM Rooms
-            WHERE RoomNumber = %s AND IsActive = 1
-        """, (room_number,))
-        room = cursor.fetchone()
-        return room
-    except Exception as e:
-        print(f"❌ Ошибка запроса: {e}")
-        return None
-    finally:
-        conn.close()
-
-def get_guest_by_telegram_id(telegram_id):
-    """Найти гостя по Telegram ID"""
-    conn = get_db_connection()
-    if not conn:
-        return None
-    
-    try:
-        cursor = conn.cursor(as_dict=True)
-        cursor.execute("SELECT GuestID, TelegramID, FullName, Phone FROM Guests WHERE TelegramID = %s", (telegram_id,))
-        guest = cursor.fetchone()
-        return guest
-    except Exception as e:
-        print(f"❌ Ошибка запроса: {e}")
-        return None
-    finally:
-        conn.close()
-
-def create_guest(telegram_id, full_name, phone):
-    """Создать нового гостя"""
-    conn = get_db_connection()
-    if not conn:
-        return None
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO Guests (TelegramID, FullName, Phone, CreatedAt)
-            VALUES (%s, %s, %s, GETDATE())
-        """, (telegram_id, full_name, phone))
-        conn.commit()
-        
-        # Получаем ID созданного гостя
-        cursor.execute("SELECT SCOPE_IDENTITY() AS GuestID")
-        guest_id = cursor.fetchone()[0]
-        return guest_id
-    except Exception as e:
-        print(f"❌ Ошибка создания гостя: {e}")
-        return None
-    finally:
-        conn.close()
-
-def create_booking(guest_id, room_id, check_in, check_out, total_price):
-    """Создать бронирование"""
-    conn = get_db_connection()
-    if not conn:
-        return None
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO Bookings (GuestID, RoomID, CheckInDate, CheckOutDate, TotalPrice, Status, Source, CreatedAt)
-            VALUES (%s, %s, %s, %s, %s, 'Подтверждено', 'Telegram Bot', GETDATE())
-        """, (guest_id, room_id, check_in, check_out, total_price))
-        conn.commit()
-        
-        cursor.execute("SELECT SCOPE_IDENTITY() AS BookingID")
-        booking_id = cursor.fetchone()[0]
-        return booking_id
-    except Exception as e:
-        print(f"❌ Ошибка создания бронирования: {e}")
-        return None
-    finally:
-        conn.close()
-
-def get_user_bookings(telegram_id):
-    """Получить все бронирования пользователя"""
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor(as_dict=True)
-        cursor.execute("""
-            SELECT 
-                b.BookingID,
-                r.RoomNumber,
-                r.RoomName,
-                b.CheckInDate,
-                b.CheckOutDate,
-                b.TotalPrice,
-                b.Status,
-                b.CreatedAt
-            FROM Bookings b
-            JOIN Rooms r ON b.RoomID = r.RoomID
-            JOIN Guests g ON b.GuestID = g.GuestID
-            WHERE g.TelegramID = %s
-            ORDER BY b.CreatedAt DESC
-        """, (telegram_id,))
-        bookings = cursor.fetchall()
-        return bookings
-    except Exception as e:
-        print(f"❌ Ошибка запроса: {e}")
-        return []
-    finally:
-        conn.close()
-
-def search_free_rooms(check_in, check_out):
-    """Поиск свободных номеров на даты"""
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor(as_dict=True)
-        cursor.execute("""
-            SELECT 
-                r.RoomNumber,
-                r.RoomName,
-                r.Category,
-                r.PricePerNight,
-                r.MaxCapacity
-            FROM Rooms r
-            WHERE r.IsActive = 1
-            AND NOT EXISTS (
-                SELECT 1
-                FROM Bookings b
-                WHERE b.RoomID = r.RoomID
-                AND b.Status IN ('Подтверждено', 'Активно')
-                AND (
-                    (b.CheckInDate <= %s AND b.CheckOutDate >= %s)
-                    OR (b.CheckInDate <= %s AND b.CheckOutDate >= %s)
-                    OR (b.CheckInDate >= %s AND b.CheckOutDate <= %s)
-                )
-            )
-        """, (check_out, check_in, check_out, check_in, check_in, check_out))
-        
-        rooms = cursor.fetchall()
-        return rooms
-    except Exception as e:
-        print(f"❌ Ошибка поиска: {e}")
-        return []
-    finally:
-        conn.close()
-
-# =============================================
-# ТЕЛЕГРАМ БОТ
-# =============================================
 
 bot = telebot.TeleBot(TOKEN)
 
-# Временное хранилище для состояний диалога
-user_data = {}
+# =============================================
+# ОБРАБОТЧИКИ КОМАНД
+# =============================================
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -233,8 +55,7 @@ def handle_help(message):
 def handle_search(message):
     chat_id = message.chat.id
     
-    # По умолчанию ищем на сегодня + 3 дня
-    from datetime import datetime, timedelta
+    # По умолчанию — сегодня и +3 дня
     check_in = datetime.now().strftime("%Y-%m-%d")
     check_out = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
     
@@ -300,7 +121,7 @@ def handle_booking(message):
         full_name = parts[start_index + 3]
         phone = parts[start_index + 4]
         
-        # Проверяем формат дат
+        # Проверка дат
         try:
             check_in_date = datetime.strptime(check_in, "%d.%m.%Y")
             check_out_date = datetime.strptime(check_out, "%d.%m.%Y")
@@ -312,13 +133,13 @@ def handle_booking(message):
             bot.send_message(chat_id, "❌ Дата выезда должна быть позже даты заезда!")
             return
         
-        # Проверяем, существует ли номер
+        # Проверка номера
         room = get_room_by_number(room_number)
         if not room:
             bot.send_message(chat_id, f"❌ Номер {room_number} не найден!")
             return
         
-        # Находим или создаем гостя
+        # Поиск гостя
         guest = get_guest_by_telegram_id(telegram_id)
         if not guest:
             guest_id = create_guest(telegram_id, full_name, phone)
@@ -328,11 +149,11 @@ def handle_booking(message):
         else:
             guest_id = guest['GuestID']
         
-        # Рассчитываем стоимость
+        # Расчет стоимости
         days = (check_out_date - check_in_date).days
         total_price = room['PricePerNight'] * days
         
-        # Создаем бронирование
+        # Создание бронирования
         booking_id = create_booking(
             guest_id,
             room['RoomID'],
@@ -363,23 +184,19 @@ def handle_unknown(message):
     bot.send_message(chat_id, "❌ Неизвестная команда. Напишите /help для справки.")
 
 # =============================================
-# ЗАПУСК БОТА
+# ЗАПУСК
 # =============================================
 
 if __name__ == "__main__":
     print("========================================")
     print("🤖 TELEGRAM БОТ + MS SQL")
     print("========================================")
-    print("✅ БОТ ЗАПУЩЕН!")
-    print("📡 Ожидание сообщений...")
-    print("========================================")
     
-    # Проверяем подключение к БД
-    conn = get_db_connection()
-    if conn:
-        print("✅ Подключение к MS SQL установлено!")
-        conn.close()
+    # Проверка подключения к БД
+    if test_connection():
+        print("✅ БОТ ЗАПУЩЕН!")
+        print("📡 Ожидание сообщений...")
+        print("========================================")
+        bot.infinity_polling(timeout=60, long_polling_timeout=60)
     else:
-        print("❌ Подключение к MS SQL НЕ РАБОТАЕТ!")
-    
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        print("❌ БОТ НЕ ЗАПУЩЕН — проверьте настройки БД!")
