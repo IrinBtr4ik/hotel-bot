@@ -1,7 +1,7 @@
-# =============================================
+
 # main.py - Telegram бот для бронирования отелей
 # База данных: SQLite
-# =============================================
+
 
 import telebot
 from datetime import datetime, timedelta
@@ -18,10 +18,10 @@ from db import (
     get_user_bookings
 )
 
-# ★★★ ТОКЕН ★★★
+# токен
 TOKEN = "8884031821:AAFoIkaqm6lsjKRzhaA0cCPRo8XquU6-aLc"  # ← ЗАМЕНИ НА СВОЙ!
 
-# ★★★ СОЗДАНИЕ БОТА ★★★
+# создание бота
 bot = telebot.TeleBot(TOKEN)
 
 # =============================================
@@ -133,7 +133,7 @@ def handle_booking(message):
         full_name = parts[start_index + 3]
         phone = parts[start_index + 4]
         
-        # ★★★ ПРОВЕРКА ДАТ ★★★
+        # проверка дат
         try:
             check_in_date = datetime.strptime(check_in, "%d.%m.%Y")
             check_out_date = datetime.strptime(check_out, "%d.%m.%Y")
@@ -145,13 +145,13 @@ def handle_booking(message):
             bot.send_message(chat_id, "❌ Дата выезда должна быть позже даты заезда!")
             return
         
-        # ★★★ ПРОВЕРКА НОМЕРА ★★★
+        # проверка номера
         room = get_room_by_number(room_number)
         if not room:
             bot.send_message(chat_id, f"❌ Номер {room_number} не найден!")
             return
         
-        # ★★★ ПОИСК ИЛИ СОЗДАНИЕ ГОСТЯ ★★★
+        # поиск или создание гостя
         guest = get_guest_by_telegram_id(telegram_id)
         if not guest:
             guest_id = create_guest(telegram_id, full_name, phone)
@@ -161,11 +161,11 @@ def handle_booking(message):
         else:
             guest_id = guest['guest_id']
         
-        # ★★★ РАСЧЕТ СТОИМОСТИ ★★★
+        # расчет стоимости
         days = (check_out_date - check_in_date).days
         total_price = room['price_per_night'] * days
         
-        # ★★★ СОЗДАНИЕ БРОНИРОВАНИЯ ★★★
+        # создание бронирования
         booking_id = create_booking(
             guest_id,
             room['room_id'],
@@ -197,16 +197,14 @@ def handle_unknown(message):
     bot.send_message(chat_id, "❌ Неизвестная команда. Напишите /help для справки.")
 
 
-# =============================================
-# ЗАПУСК
-# =============================================
+# ЗАПУС
 
 if __name__ == "__main__":
     print("========================================")
     print("🤖 TELEGRAM БОТ + SQLite")
     print("========================================")
     
-    # ★★★ ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ★★★
+    # инициализация баз данных
     create_tables()
     init_rooms()
     
