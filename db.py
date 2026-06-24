@@ -2,7 +2,6 @@
 import sqlite3
 import os
 
-# ★★★ ПУТЬ К ФАЙЛУ БАЗЫ ★★★
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'database.db')
 
 def get_connection():
@@ -104,10 +103,8 @@ def init_rooms():
     
     conn.close()
 
-# =============================================
-# ФУНКЦИИ ДЛЯ РАБОТЫ С БД
-# =============================================
 
+# Функции для работы с БД
 def get_guest_by_telegram_id(telegram_id):
     conn = get_connection()
     if not conn:
