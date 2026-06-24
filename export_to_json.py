@@ -2,7 +2,7 @@ import sqlite3
 import json
 import os
 
-# ★★★ ПУТЬ К БАЗЕ ДАННЫХ ★★★
+
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'database.db')
 
 def export_to_json():
@@ -18,15 +18,15 @@ def export_to_json():
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    # ★★★ 1. ЭКСПОРТ ГОСТЕЙ ★★★
+    # экспорт гостей
     cursor.execute("SELECT * FROM guests")
     guests = [dict(row) for row in cursor.fetchall()]
     
-    # ★★★ 2. ЭКСПОРТ НОМЕРОВ ★★★
+    # экспорт номеров
     cursor.execute("SELECT * FROM rooms")
     rooms = [dict(row) for row in cursor.fetchall()]
     
-    # ★★★ 3. ЭКСПОРТ БРОНИРОВАНИЙ ★★★
+    # экспорт бронироаний
     cursor.execute('''
         SELECT 
             b.booking_id,
@@ -49,7 +49,7 @@ def export_to_json():
     
     conn.close()
     
-    # ★★★ 4. ФОРМИРУЕМ ИТОГОВЫЙ JSON ★★★
+    # формируем итоговый JSON
     data = {
         'export_date': str(datetime.now()),
         'guests_count': len(guests),
@@ -60,7 +60,7 @@ def export_to_json():
         'bookings': bookings
     }
     
-    # ★★★ 5. СОХРАНЯЕМ JSON ★★★
+    # сохраняем json
     output_path = '/tmp/1c_export.json'  # для Bothost
     # output_path = 'C:\\1c_export.json'  # для Windows
     
